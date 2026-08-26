@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reverse DCF Tool</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="page-header">
+      <h1>Reverse DCF Tool</h1>
+      <p class="subtitle">Work backward from a stock's price to find the growth rate the market is already pricing in.</p>
+    </header>
+
+    <section class="card">
+      <div class="lookup-row">
+        <label for="ticker">Ticker</label>
+        <input id="ticker" type="text" placeholder="e.g. AAPL" autocomplete="off" spellcheck="false" list="sp500-list" />
+        <button id="fetch-btn" type="button">Fetch data</button>
+      </div>
+      <p id="lookup-status" class="status"></p>
+      <p class="note">Type a ticker or company name to pick from the full S&amp;P 500 — any other US-listed ticker works too.</p>
+    </section>
+
+    <datalist id="sp500-list"></datalist>
+
+    <section class="card">
+      <h2>Fundamentals</h2>
+      <div class="grid two-col">
+        <div class="field">
+          <label for="price">Current price ($)</label>
+          <input id="price" type="number" step="any" />
+        </div>
+        <div class="field">
+          <label for="shares">Shares outstanding</label>
+          <input id="shares" type="number" step="any" />
+        </div>
+        <div class="field">
+          <label for="fcf">Base free cash flow ($, TTM)</label>
+          <input id="fcf" type="number" step="any" />
+        </div>
+        <div class="field">
+          <label>Market cap (derived)</label>
+          <output id="market-cap-display">&mdash;</output>
+        </div>
+      </div>
+      <p id="fundamentals-note" class="note"></p>
+    </section>
+
+    <section class="card">
+      <h2>Assumptions</h2>
+      <div class="grid two-col">
+        <div class="field">
+          <label for="discount-rate">Discount rate / required return (%)</label>
+          <input id="discount-rate" type="number" step="any" value="9" />
+          <details class="why">
+            <summary id="discount-rate-why-summary">Why 9%?</summary>
+            <p id="discount-rate-why-body">Approximates the long-run average annual return of the broad stock market, used as a default "required return" for a roughly average-risk company. Fetch a ticker above to get a company-specific estimate via CAPM (risk-free rate + beta × equity risk premium) — riskier, higher-beta companies land higher in the range (up to ~11%+), stable low-beta ones lower (~8%).</p>
+          </details>
+        </div>
+        <div class="field">
+          <label for="terminal-growth">Terminal growth rate (%)</label>
+          <input id="terminal-growth" type="number" step="any" value="3" />
+          <details class="why">
+            <summary>Why 3%?</summary>
+            <p>This is the rate cash flow is assumed to grow <em>forever</em>, so it's conventionally capped near long-run economy-wide growth — a company growing faster than the whole economy forever eventually becomes larger than the economy. <strong>3%</strong> approximates long-run US nominal GDP growth: roughly 2% inflation (the Fed's target) plus ~1% real growth. Because terminal value is often 50-75%+ of total DCF value, this input matters a lot — that's why the sensitivity table sweeps it by ±1%.</p>
+          </details>
+        </div>
+        <div class="field">
+          <label for="proj-years">Stage-1 projection years</label>
+          <input id="proj-years" type="number" step="1" min="1" max="30" value="10" />
+          <details class="why">
+            <summary>Why 10 years?</summary>
+            <p>A common stage-1 window: long enough for an elevated growth phase to plausibly fade toward maturity, short enough that explicit year-by-year assumptions still feel grounded. Longer fade periods (15-20y) suit early-stage/high-growth companies with more "excess growth" to work off; shorter ones (5y) suit already-mature, slow-growth companies.</p>
+          </details>
+        </div>
+      </div>
+      <button id="calc-btn" type="button" class="primary">Calculate implied growth</button>
+      <p id="calc-status" class="status"></p>
+    </section>
+
+    <section id="results" class="card hidden">
+      <h2>Implied growth rate</h2>
+      <div class="growth-compare">
+        <div class="growth-stat">
+          <p class="stat-label">Your estimate</p>
+          <p class="big-number" id="quiz-range-display">&mdash;</p>
+          <button id="retake-quiz-btn" type="button" class="link-btn hidden">Retake questionnaire</button>
+        </div>
+        <div class="growth-stat">
+          <p class="stat-label">Market implied growth</p>
+          <p class="big-number" id="implied-growth">&mdash;</p>
+        </div>
+      </div>
+      <p class="note" id="quiz-compare"></p>
+      <p class="note">The stage-1 annual growth rate in free cash flow that, discounted at your required return with the given terminal growth, reproduces today's market cap.</p>
+
+      <button id="show-calc-btn" type="button">Show calculations</button>
+
+      <div id="calc-detail" class="hidden">
+        <h3>The discounting, year by year</h3>
+        <p class="note">Each year's free cash flow is projected forward at the implied growth rate, then discounted back to today at <span id="cf-rate-label">&mdash;</span>. The terminal value captures everything after the projection window, discounted back the same way. The present values sum to today's implied equity value.</p>
+        <div class="table-wrap">
+          <table id="cashflow-table"></table>
+        </div>
+
+        <h3>From equity value to price per share, and the enterprise-value bridge</h3>
+        <p class="note">This model discounts levered free cash flow at a cost-of-equity-style rate straight to equity value (market cap) — the FCFE approach — so it doesn't need enterprise value to solve. EV is shown below as an informational bridge, the way a standard WACC-based DCF would frame the same company.</p>
+        <div class="table-wrap">
+          <table id="bridge-table"></table>
+        </div>
+      </div>
+
+      <h3>Sensitivity: implied growth across assumptions</h3>
+      <p class="note">Rows vary the discount rate, columns vary the terminal growth rate. Each cell is the implied stage-1 growth rate for that combination.</p>
+      <div class="table-wrap">
+        <table id="sensitivity-table"></table>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="quiz-modal" class="modal-overlay hidden">
+    <div class="modal-box" role="dialog" aria-labelledby="quiz-modal-title">
+      <button id="quiz-modal-close-btn" type="button" class="modal-close-btn" aria-label="Close">&times;</button>
+      <h2 id="quiz-modal-title">What growth rate do you believe in?</h2>
+      <p class="note">Answer a few questions about your own view of this company, and we'll narrow it down to a specific 4-point range you can compare against the model's implied rate.</p>
+
+      <div class="quiz-question">
+        <h3>1. How would you categorize this company's growth?</h3>
+        <div class="quiz-options">
+          <label><input type="radio" name="quiz-q1" value="high" /><span>High Growth</span></label>
+          <label><input type="radio" name="quiz-q1" value="medium" /><span>Medium Growth</span></label>
+          <label><input type="radio" name="quiz-q1" value="low" /><span>Low Growth</span></label>
+        </div>
+      </div>
+
+      <div class="quiz-question">
+        <h3>2. Compare it to a stock you know well</h3>
+        <div class="lookup-row">
+          <label for="quiz-ref-ticker">Reference ticker</label>
+          <input id="quiz-ref-ticker" type="text" placeholder="e.g. COST" autocomplete="off" spellcheck="false" list="sp500-list" />
+          <button id="quiz-ref-fetch-btn" type="button">Look up</button>
+        </div>
+        <p id="quiz-ref-status" class="status"></p>
+        <div class="quiz-options">
+          <label><input type="radio" name="quiz-q2" value="higher" /><span>Higher growth</span></label>
+          <label><input type="radio" name="quiz-q2" value="same" /><span>Same growth</span></label>
+          <label><input type="radio" name="quiz-q2" value="slower" /><span>Slower growth</span></label>
+        </div>
+        <p class="note">Look up a reference ticker so its own implied growth rate can be used as the comparison point.</p>
+      </div>
+
+      <div class="quiz-question">
+        <h3>3. Compared to its industry peers, this company grows...</h3>
+        <div class="quiz-options">
+          <label><input type="radio" name="quiz-q3" value="faster" /><span>Faster than most peers</span></label>
+          <label><input type="radio" name="quiz-q3" value="average" /><span>About average for its industry</span></label>
+          <label><input type="radio" name="quiz-q3" value="slower" /><span>Slower than most peers</span></label>
+        </div>
+      </div>
+
+      <div class="quiz-question">
+        <h3>4. How many years can it sustain above-average growth?</h3>
+        <div class="quiz-options">
+          <label><input type="radio" name="quiz-q4" value="long" /><span>More than 10 years</span></label>
+          <label><input type="radio" name="quiz-q4" value="medium" /><span>5&ndash;10 years</span></label>
+          <label><input type="radio" name="quiz-q4" value="short" /><span>Less than 5 years</span></label>
+        </div>
+      </div>
+
+      <div class="quiz-question">
+        <h3>5. Which range best matches your expectation?</h3>
+        <div class="quiz-options" id="quiz-q5-options">
+          <p class="note">Answer question 1 above to see your personalized ranges.</p>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button id="quiz-skip-btn" type="button">Skip</button>
+        <button id="quiz-done-btn" type="button" class="primary" disabled>See my results</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
