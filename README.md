@@ -15,13 +15,30 @@ npm start
 
 Open http://localhost:3000
 
-### Optional: Financial Modeling Prep fallback
+### Optional: fallback data sources
 
-If Yahoo Finance ever fails for a given ticker, the server will fall back to
-Financial Modeling Prep — but only if you've configured a key:
+Fundamentals are tried from up to three sources in order, each only used if the
+previous one fails or isn't configured:
 
-1. Get a free API key at https://site.financialmodelingprep.com/developer/docs.
-2. Copy `.env.example` to `.env` and paste your key into `FMP_API_KEY`.
+1. **Yahoo Finance** — free, no key. Note: many cloud hosts (Render included) have
+   their outbound IPs blocked by Yahoo's anti-scraping measures, so this may fail
+   100% of the time once deployed even though it works fine locally.
+2. **Financial Modeling Prep** — free tier, but gates some tickers (new S&P 500
+   additions, spinoffs, some share classes) behind a paid plan. Configure:
+   - Get a free key at https://site.financialmodelingprep.com/developer/docs.
+   - Copy `.env.example` to `.env` and paste it into `FMP_API_KEY`.
+3. **SEC EDGAR + Twelve Data** — free, no per-symbol restrictions. SEC EDGAR
+   supplies fundamentals (TTM free cash flow, debt, cash, shares outstanding)
+   straight from official filings, covering any US company that files with the
+   SEC; Twelve Data supplies the stock price (SEC EDGAR has no market data of its
+   own). Configure:
+   - Get a free key at https://twelvedata.com/pricing (the Basic/free plan).
+   - Paste it into `TWELVE_DATA_API_KEY` in `.env`.
+
+   This source has no beta (so the discount-rate suggestion falls back to the
+   generic default) and total debt is a best-effort figure — different companies
+   tag debt under inconsistent XBRL line items, so it's sometimes unavailable or
+   approximate; it's discarded entirely rather than shown if it looks stale.
 
 ## How it works
 
@@ -61,8 +78,11 @@ Financial Modeling Prep — but only if you've configured a key:
    `render.yaml` and configures a free Node web service automatically
    (`npm install` to build, `npm start` to run). No environment variables are
    required.
-3. If you want the optional FMP fallback in production, add `FMP_API_KEY` as
-   an environment variable in the Render service's settings.
+3. Add `FMP_API_KEY` and/or `TWELVE_DATA_API_KEY` as environment variables in the
+   Render service's settings if you want those fallbacks in production — strongly
+   recommended, since Yahoo Finance is blocked from most cloud hosts' IPs (see
+   Limitations below), so without at least one fallback configured, most lookups
+   will fail once deployed.
 
 ## Limitations
 

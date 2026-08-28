@@ -2,12 +2,15 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const { fetchYahooCompanyData } = require('./yahoo');
+const { fetchSecEdgarFundamentals } = require('./secEdgar');
+const { fetchTwelveDataPrice } = require('./twelvedata');
 const sp500 = require('./sp500.json');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const FMP_API_KEY = process.env.FMP_API_KEY;
 const FMP_BASE = 'https://financialmodelingprep.com/stable';
+const TWELVE_DATA_API_KEY = process.env.TWELVE_DATA_API_KEY;
 
 // CAPM constants used to suggest a per-company discount rate: r = riskFree + beta * ERP.
 const RISK_FREE_RATE = 0.04; // approx. long-run 10-year Treasury yield
@@ -130,10 +133,37 @@ async function fetchFromFMP(ticker) {
   };
 }
 
+// Combines SEC EDGAR (free fundamentals, no per-symbol restriction) with Twelve
+// Data's free price quote (SEC EDGAR has no market data of its own). Market cap is
+// computed from price × shares outstanding since neither free source provides it
+// directly. Beta is unavailable here, so the discount-rate suggestion falls back to
+// the generic default — same graceful handling as an unbeta'd FMP/Yahoo result.
+async function fetchFromSecAndTwelveData(ticker) {
+  if (!TWELVE_DATA_API_KEY) {
+    throw new Error('No TWELVE_DATA_API_KEY configured.');
+  }
+
+  const [fundamentals, priceData] = await Promise.all([
+    fetchSecEdgarFundamentals(ticker),
+    fetchTwelveDataPrice(ticker, TWELVE_DATA_API_KEY),
+  ]);
+
+  const marketCap = fundamentals.sharesOutstanding != null ? priceData.price * fundamentals.sharesOutstanding : null;
+
+  return {
+    ...fundamentals,
+    companyName: priceData.companyName || fundamentals.companyName,
+    price: priceData.price,
+    marketCap,
+    source: 'sec-edgar+twelvedata',
+  };
+}
+
 // GET /api/company/AAPL -> price, shares outstanding, TTM free cash flow, suggested
-// discount rate, etc. Tries Yahoo Finance first (free, no key, covers virtually every
-// US-listed stock including the full S&P 500); falls back to Financial Modeling Prep
-// if an API key is configured and Yahoo didn't return usable data.
+// discount rate, etc. Tries three sources in order: Yahoo Finance (free, no key, but
+// blocked from most cloud hosts' IPs), Financial Modeling Prep (free tier excludes
+// some symbols behind a paid-plan wall), then SEC EDGAR + Twelve Data (free, no
+// per-symbol restrictions, official filing data — the most reliable fallback).
 app.get('/api/company/:ticker', async (req, res) => {
   const ticker = req.params.ticker.trim().toUpperCase();
   if (!/^[A-Z0-9.\-]{1,10}$/.test(ticker)) {
@@ -158,6 +188,18 @@ app.get('/api/company/:ticker', async (req, res) => {
       return res.json(finalize(data));
     } catch (err) {
       errors.push(`Financial Modeling Prep: ${err.message}`);
+    }
+  }
+
+  if (TWELVE_DATA_API_KEY) {
+    try {
+      const data = await fetchFromSecAndTwelveData(ticker);
+      if (data.price > 0 && data.ttmFreeCashFlow != null) {
+        return res.json(finalize(data));
+      }
+      errors.push('SEC EDGAR + Twelve Data: returned no usable price/cash-flow data for this ticker.');
+    } catch (err) {
+      errors.push(`SEC EDGAR + Twelve Data: ${err.message}`);
     }
   }
 
